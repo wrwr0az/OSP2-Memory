@@ -23,6 +23,11 @@ public class MMU extends IflMMU
 
         @OSPProject Memory
     */
+	
+	public static int Cursor;
+	public static int wantFree;
+	
+	
     public static void init()
     {
         // your code goes here
@@ -30,6 +35,9 @@ public class MMU extends IflMMU
     	
     	for (int i=0; i<MMU.getFrameTableSize(); i++)
     		MMU.setFrame(i, new FrameTableEntry(i));
+    	
+    	Cursor = 0;
+    	wantFree = 0;
     	
 
     }
@@ -91,7 +99,7 @@ public class MMU extends IflMMU
     	
     	else {
     		
-    		if (thread.getStatus() != ThreadKill) { /////////////////////!!!!!!!!
+    		if (thread.getStatus() != ThreadKill) { /////////////////////!!!!!!!! I don't know if this condition is necessary or not
 				pageFrame.setReferenced(true);
 				
 				if (referenceType == MemoryWrite) {
