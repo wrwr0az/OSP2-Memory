@@ -73,7 +73,80 @@ public class PageFaultHandler extends IflPageFaultHandler {
 	 */
 	public static int do_handlePageFault(ThreadCB thread, int referenceType, PageTableEntry page) {
 		// your code goes here
-		return 0;
+		if (page.isValid()) {
+			return FAILURE;
+		}
+
+		FrameTableEntry NFrame = getFreeFrame();
+		if (NFrame == null) {
+			return NotEnoughMemory;
+		}
+
+		Event event = new SystemEvent("PageFaultHappend");
+		thread.suspend(event);
+
+		PageTableEntry Npage = NFrame.getPage();
+		if (Npage != null) {
+			
+			if (NFrame.isDirty()) {
+				
+				NFrame.getPage().getTask().getSwapFile().write(NFrame.getPage().getID(), NFrame.getPage(), thread);
+
+				if (thread.getStatus() == GlobalVariables.ThreadKill) {
+					page.notifyThreads();
+					
+					event.notifyThreads();
+					ThreadCB.dispatch();
+					return FAILURE;
+
+				}
+
+				NFrame.setDirty(false);
+
+			}
+
+			NFrame.setReferenced(false);
+			NFrame.setPage(null);
+			Npage.setValid(false);
+			Npage.setFrame(null);
+
+		}
+
+		page.setFrame(NFrame);
+		page.getTask().getSwapFile().read(page.getID(), page, thread);
+
+		if (thread.getStatus() == ThreadKill) {
+			
+			if (NFrame.getPage() != null) {
+				
+				if (NFrame.getPage().getTask() == thread.getTask()) {
+					
+					NFrame.setPage(null);
+				}
+			}
+			
+			page.notifyThreads();
+			page.setValidatingThread(null);
+			page.setFrame(null);
+			
+			event.notifyThreads();
+			ThreadCB.dispatch();
+			return FAILURE;
+		}
+
+		NFrame.setPage(page);
+		page.setValid(true);
+
+		if (NFrame.getReserved() == thread.getTask()) {
+			NFrame.setUnreserved(thread.getTask());
+		}
+
+		page.setValidatingThread(null);
+		
+		page.notifyThreads();
+		event.notifyThreads();
+		ThreadCB.dispatch();
+		return SUCCESS;
 	}
 
 	int numFreeFrames() {
@@ -90,7 +163,7 @@ public class PageFaultHandler extends IflPageFaultHandler {
 
 	}
 
-	FrameTableEntry getFreeFrame() {
+	static FrameTableEntry getFreeFrame() {
 		int curentFreeFrames = 0;
 		FrameTableEntry frame = null;
 		b: for (int i = 0; i < MMU.getFrameTableSize(); i++) {
@@ -109,8 +182,8 @@ public class PageFaultHandler extends IflPageFaultHandler {
 		boolean isdirty = true;
 		int frameID = 0;
 		int counter = 0;
-		
-		while (counter > (2*MMU.getFrameTableSize()) ) {
+
+		while (counter > (2 * MMU.getFrameTableSize())) {
 			frame = MMU.getFrame(MMU.Cursor);
 
 			if (frame.isReferenced()) {
@@ -133,7 +206,7 @@ public class PageFaultHandler extends IflPageFaultHandler {
 				frameID = frame.getID();
 				isdirty = false;
 			}
-			MMU.Cursor= (MMU.Cursor+1)%MMU.getFrameTableSize();
+			MMU.Cursor = (MMU.Cursor + 1) % MMU.getFrameTableSize();
 			counter++;
 		}
 
@@ -153,9 +226,8 @@ public class PageFaultHandler extends IflPageFaultHandler {
 			}
 
 		}
-		
-		else 
-		{
+
+		else {
 			if (numFreeFrames() == MMU.wantFree) {
 				return getFreeFrame();
 			}
