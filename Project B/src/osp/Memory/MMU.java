@@ -37,7 +37,7 @@ public class MMU extends IflMMU
     		MMU.setFrame(i, new FrameTableEntry(i));
     	
     	Cursor = 0;
-    	wantFree = 0;
+    	wantFree = 1;
     	
 
     }
@@ -73,6 +73,7 @@ public class MMU extends IflMMU
     	//check if the page is valid 
     	if (!page.isValid()) {
     		
+    		// 
     		if (page.getValidatingThread() == null) {
     			InterruptVector.setPage(page);
     			InterruptVector.setReferenceType(referenceType);
