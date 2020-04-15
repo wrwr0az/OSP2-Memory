@@ -76,14 +76,24 @@ public class PageFaultHandler extends IflPageFaultHandler {
 		if (page.isValid()) {
 			return FAILURE;
 		}
+		FrameTableEntry NFrame = null;
+		NFrame = getFreeFrame();
 
-		FrameTableEntry NFrame = getFreeFrame();
+		
 		if (NFrame == null) {
-			return NotEnoughMemory;
+			NFrame = SecondChance();
+			if (NFrame == null)
+				return NotEnoughMemory;
 		}
 
+		page.setValidatingThread(thread);
 		Event event = new SystemEvent("PageFaultHappend");
 		thread.suspend(event);
+		
+
+		if (!NFrame.isReserved()) {
+			NFrame.setReserved(thread.getTask());
+		}
 
 		PageTableEntry Npage = NFrame.getPage();
 		if (Npage != null) {
@@ -94,7 +104,6 @@ public class PageFaultHandler extends IflPageFaultHandler {
 
 				if (thread.getStatus() == GlobalVariables.ThreadKill) {
 					page.notifyThreads();
-
 					event.notifyThreads();
 					ThreadCB.dispatch();
 					return FAILURE;
@@ -105,51 +114,69 @@ public class PageFaultHandler extends IflPageFaultHandler {
 
 			}
 
+			/*
+			 * NFrame.setReferenced(false); NFrame.setPage(null); Npage.setValid(false);
+			 * Npage.setFrame(null);
+			 */
+
 			NFrame.setReferenced(false);
-			NFrame.setPage(null);
-			Npage.setValid(false);
-			Npage.setFrame(null);
+			if (Npage != null) {
+				Npage.setValid(false);
+				Npage.setFrame(null);
+				NFrame.setPage(null);
+			}
 
 		}
 
 		page.setFrame(NFrame);
+		NFrame.setPage(page);
 		page.getTask().getSwapFile().read(page.getID(), page, thread);
 
 		if (thread.getStatus() == ThreadKill) {
 
-			if (NFrame.getPage() != null) {
 
-				if (NFrame.getPage().getTask() == thread.getTask()) {
 
-					NFrame.setPage(null);
-				}
-			}
-
-			page.notifyThreads();
 			page.setValidatingThread(null);
+			page.notifyThreads();
 			page.setFrame(null);
 
+			if (NFrame.getReserved() == thread.getTask()) {
+				NFrame.setUnreserved(thread.getTask());
+			}
+
+			NFrame.setReferenced(false);
+			NFrame.setDirty(false);
 			event.notifyThreads();
+			NFrame.setPage(null);
 			ThreadCB.dispatch();
 			return FAILURE;
 		}
 
-		NFrame.setPage(page);
-		page.setValid(true);
 
-		if (NFrame.getReserved() == thread.getTask()) {
+		page.setValid(true);
+		if (NFrame.getReserved() == thread.getTask())
+		{
 			NFrame.setUnreserved(thread.getTask());
+		}
+		NFrame.setReferenced(true);
+		page.notifyThreads();
+		event.notifyThreads();
+
+		if (referenceType == MemoryWrite) {
+			NFrame.setDirty(true);
+		} else {
+			NFrame.setDirty(false);
 		}
 
 		page.setValidatingThread(null);
-
-		page.notifyThreads();
-		event.notifyThreads();
+	//	page.notifyThreads();
+	//	event.notifyThreads();
 		ThreadCB.dispatch();
 		return SUCCESS;
 	}
 
-	int numFreeFrames() {
+
+	static int numFreeFrames() {
 
 		// create variable to count free frame
 		int curentFreeFrames = 0;
@@ -158,26 +185,30 @@ public class PageFaultHandler extends IflPageFaultHandler {
 		// Search for all frame
 		for (int i = 0; i < MMU.getFrameTableSize(); i++) {
 			frame = MMU.getFrame(i);
-			// if frame page not null and frame isn't reserved and frame is unlocked and frame is not null
+			// if frame page not null and frame isn't reserved and frame is unlocked and
+			// frame is not null
 			if ((frame.getPage() == null) && (!frame.isReserved()) && (frame.getLockCount() == 0) && frame != null) {
 				// increment count of free frame by 1
 				curentFreeFrames++;
 			}
 		}
+
+
 		// return number of free frame
 		return curentFreeFrames;
 
 	}
 
 	static FrameTableEntry getFreeFrame() {
-		// create variable to count free frame
-		int curentFreeFrames = 0;
+
+
 		// create a frame
 		FrameTableEntry frame = null;
 		// Search for all frame
 		b: for (int i = 0; i < MMU.getFrameTableSize(); i++) {
 			frame = MMU.getFrame(i);
-			//// if frame page not null and frame isn't reserved and frame is unlocked and frame is not null
+			//// if frame page not null and frame isn't reserved and frame is unlocked and
+			//// frame is not null
 			if ((frame.getPage() == null) && (!frame.isReserved()) && (frame.getLockCount() == 0) && frame != null) {
 				// break the loop to return first free frame
 				break b;
@@ -189,7 +220,7 @@ public class PageFaultHandler extends IflPageFaultHandler {
 
 	}
 
-	FrameTableEntry SecondChance() {
+	static FrameTableEntry SecondChance() {
 		// create frame
 		FrameTableEntry frame;
 		// to get first dirty frame
@@ -199,44 +230,48 @@ public class PageFaultHandler extends IflPageFaultHandler {
 		// create counter
 		int counter = 0;
 
-		// check if the counter is less than 2 multiply by frame table size
-		while (counter > (2 * MMU.getFrameTableSize())) {
-			// get frame from MMU cursor
-			frame = MMU.getFrame(MMU.Cursor);
-			// check if frame is referenced
-			if (frame.isReferenced()) {
-				// set reference false
-				frame.setReferenced(false);
-			}
+		if (numFreeFrames() < MMU.wantFree) {
 
-			// if frame not referenced and not reserved and not dirst and unlocked and
-			// number of free frame less than or equal to MMU wantFree
-			if (frame.isReferenced() == false && frame.isReserved() == false && frame.isDirty() == false
-					&& frame.getLockCount() == 0 && numFreeFrames() <= MMU.wantFree) {
+			// check if the counter is less than 2 multiply by frame table size
+			while (counter > (2 * MMU.getFrameTableSize())) {
+				// get frame from MMU cursor
+				frame = MMU.getFrame(MMU.Cursor);
+				// check if frame is referenced
+				if (frame.isReferenced()) {
+					// set reference false
+					frame.setReferenced(false);
+				}
 
-				// free frame 
-				frame.setPage(null);
-				// didn't clean the page
-				frame.setDirty(false);
-				// didn't unset the reference bit
-				frame.setReferenced(false);
-				// set frame entry to null
-				frame.getPage().setFrame(null);
-				// set validity flag  to false
-				frame.getPage().setValid(false);
+				// if frame not referenced and not reserved and not dirst and unlocked and
+				// number of free frame less than or equal to MMU wantFree
+				if (frame.isReferenced() == false && frame.isReserved() == false && frame.isDirty() == false
+						&& frame.getLockCount() == 0 && numFreeFrames() <= MMU.wantFree) {
 
+					// free frame
+					frame.setPage(null);
+					// didn't clean the page
+					frame.setDirty(false);
+					// didn't unset the reference bit
+					frame.setReferenced(false);
+					// set frame entry to null
+					frame.getPage().setFrame(null);
+					// set validity flag to false
+					frame.getPage().setValid(false);
+
+				}
+				// check if frame dirty and unlocked and is not reserved,, also isdirty is true
+				// to get first dirty frame
+				if (frame.isDirty() && isdirty && frame.getLockCount() == 0 && frame.isReserved() == false) {
+					// copy frame id
+					frameID = frame.getID();
+					// change isdirty to false
+					isdirty = false;
+				}
+				// update MMU cursor
+				MMU.Cursor = (MMU.Cursor + 1) % MMU.getFrameTableSize();
+				// increment counter
+				counter++;
 			}
-			// check if frame dirty and unlocked and is not reserved,, also isdirty is true to get first dirty frame
-			if (frame.isDirty() && isdirty && frame.getLockCount() == 0 && frame.isReserved() == false) {
-				// copy frame id
-				frameID = frame.getID();
-				// change isdirty to false 
-				isdirty = false;
-			}
-			// update MMU cursor 
-			MMU.Cursor = (MMU.Cursor + 1) % MMU.getFrameTableSize();
-			// increment counter
-			counter++;
 		}
 
 		/*
@@ -247,26 +282,32 @@ public class PageFaultHandler extends IflPageFaultHandler {
 
 		// check if number of free frame not equal to MMU wantFree
 		if (numFreeFrames() != MMU.wantFree) {
+
 			// check if is dirty false ,, means there is dirty frame
 			if (!isdirty)
 				// return first dirty frame
 				return new FrameTableEntry(frameID);
-			// if number of free frame less than MMU wantFree and is dirty is true ,, means there is not dirty frame
+			// if number of free frame less than MMU wantFree and is dirty is true ,, means
+			// there is not dirty frame
 			if (numFreeFrames() < MMU.wantFree && isdirty) {
-				// invoke method getfreeframe to get the free frame and save it 
+				// invoke method getfreeframe to get the free frame and save it
 				FrameTableEntry freeFrame = getFreeFrame();
 				// retrun the free frame
 				return freeFrame;
 			}
+			
+
 
 		}
 
 		else {
-			// if number of free frame equal to MMU wantFree 
+
+			// if number of free frame equal to MMU wantFree
 			if (numFreeFrames() == MMU.wantFree) {
-				// return frame from method getFreeFrame()  
+				// return frame from method getFreeFrame()
 				return getFreeFrame();
 			}
+
 		}
 
 		return null;

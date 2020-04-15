@@ -59,21 +59,31 @@ public class PageTableEntry extends IflPageTableEntry {
 			}
 
 			// check if the thread caused the page fault equal to this thread
-			else if (getValidatingThread() != iorb.getThread()) {
+			else {
+				
+				if (getValidatingThread() != iorb.getThread()) {
+			
+					// suspend thread
+					iorb.getThread().suspend(this);
 
+				
+				}
+			 
+			
+			else {
 				return FAILURE;
-
-			} else {
-				// suspend thread
-				iorb.getThread().suspend(this);
+				
 			}
 
 		}
 
+		}
 		
+
 		return SUCCESS;
 
 	}
+
 
 	/**
 	 * This method decreases the lock count on the page by one.
@@ -85,9 +95,11 @@ public class PageTableEntry extends IflPageTableEntry {
 	public void do_unlock() {
 		// your code goes here
 		// decrement lockCount if is not equal or less than 1
-		if (getFrame().getLockCount() > 0)
+		if (getFrame().getLockCount() > 0) {
+			
+		
 			getFrame().decrementLockCount();
-
+		}
 	}
 
 	/*
