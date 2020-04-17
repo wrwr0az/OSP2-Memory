@@ -29,11 +29,14 @@ public class PageTable extends IflPageTable {
 	 */
 	public PageTable(TaskCB ownerTask) {
 		// your code goes here
+
 		// call super
 		super(ownerTask);
+
 		// get the size of page table
 		int size = MMU.getPageAddressBits();
 		arraySize = (int) Math.pow(2, size);
+
 		// create page table array
 		pages = new PageTableEntry[arraySize];
 
@@ -53,19 +56,23 @@ public class PageTable extends IflPageTable {
 		// your code goes here
 		TaskCB task = getTask();
 
-		for (int i = 0; i < arraySize; i++) {
-			//copy frame
-			FrameTableEntry frame = pages[i].getFrame();
-			// get page task for frame
-			TaskCB frameTask = frame.getPage().getTask();
-			
-			// check if frame task equal task and frame isn't null
-			if (frameTask == task && frame != null) {
-				
+		for (int i = 0; i < MMU.getFrameTableSize(); i++) {
+
+			// copy frame
+			FrameTableEntry frame = MMU.getFrame(i);
+
+			// get frame page
+			PageTableEntry page = frame.getPage();
+
+			// check if page task equal task and page isn't null
+			if (page != null && page.getTask() == task) {
+
 				// nullify the page
 				frame.setPage(null);
+
 				// clean the page
 				frame.setDirty(false);
+
 				// unset the reference
 				frame.setReferenced(false);
 

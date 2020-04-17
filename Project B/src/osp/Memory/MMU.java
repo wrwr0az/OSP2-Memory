@@ -56,45 +56,50 @@ public class MMU extends IflMMU {
 	 */
 	static public PageTableEntry do_refer(int memoryAddress, int referenceType, ThreadCB thread) {
 		// your code goes here
+
 		// compute page to which memory belongs
 		int pageAddress = (int) (memoryAddress / Math.pow(2, getVirtualAddressBits() - getPageAddressBits()));
 		PageTableEntry page = getPTBR().pages[pageAddress];
-		FrameTableEntry pageFrame = page.getFrame();
+		// FrameTableEntry pageFrame = page.getFrame();
+
 		// check if the page is invalid
 		if (!page.isValid()) {
+
 			// check is validation thread of the page is null
 			if (page.getValidatingThread() == null) {
+
 				// do interrupt
 				InterruptVector.setReferenceType(referenceType);
 				InterruptVector.setPage(page);
 				InterruptVector.setThread(thread);
 				CPU.interrupt(PageFault);
 			}
+
 			else {
+
 				// suspend the thread
 				thread.suspend(page);
-				// if thread not kill
-				if (thread.getStatus() != ThreadKill) {
-					// set referenced
-					pageFrame.setReferenced(true);
-					// if reference is memory write
-					if (referenceType == MemoryWrite) {
-						// set dirty
-						page.getFrame().setDirty(true);
-					}
-				} 
+			}
+
+			// if thread not kill
+			if (thread.getStatus() == ThreadKill) {
+
+				return page;
+
 			}
 		}
-		else {
-			if (thread.getStatus() != ThreadKill) { ///////////////////// !!!!!!!! I don't know if this condition is necessary or not
-				// set referenced
-				pageFrame.setReferenced(true);
-				if (referenceType == MemoryWrite) {
-					// set dirty
-					page.getFrame().setDirty(true);
-				}
-			}
+
+		// set referenced
+		page.getFrame().setReferenced(true);
+
+		// if the reference type is memory write set dirty
+		if (referenceType == MemoryWrite) {
+
+			// set dirty
+			page.getFrame().setDirty(true);
+
 		}
+
 		// return page
 		return page;
 	}
