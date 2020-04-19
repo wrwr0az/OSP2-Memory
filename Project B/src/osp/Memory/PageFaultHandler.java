@@ -12,386 +12,378 @@ import osp.Utilities.*;
 import osp.IFLModules.*;
 
 /**
- * The page fault handler is responsible for handling a page fault. If a swap in
- * or swap out operation is required, the page fault handler must request the
- * operation.
+ * Purpose: The page fault handler is responsible for handling a page fault. If
+ * a swap in or swap out operation is required, the page fault handler must
+ * request the operation.
  * 
  * @OSPProject Memory
+ * 
+ *             Authors: Abdulaziz Hasan 1555528, Mohammed Shukri 1647376 Date of
+ *             the Last modification: 16/4/2020
  */
 public class PageFaultHandler extends IflPageFaultHandler {
+
 	/**
-	 * This method handles a page fault.
+	 * Purpose: This method handles a page fault.
 	 * 
-	 * It must check and return if the page is valid,
+	 * Inputs: - thread the thread that requested a page fault - referenceType
+	 * whether it is memory read or write - page the memory page
 	 * 
-	 * It must check if the page is already being brought in by some other thread,
-	 * i.e., if the page has already pagefaulted (for instance, using
-	 * getValidatingThread()). If that is the case, the thread must be suspended on
-	 * that page.
+	 * Output: - Return SUCCESS if everything is fine. - FAILURE if the thread dies
+	 * while waiting for swap in or swap out or if the page is already in memory and
+	 * no page fault was necessary (well, this shouldn't happen, but...). In
+	 * addition, if there is no frame that can be allocated to satisfy the page
+	 * fault, then it should return NotEnoughMemory
 	 * 
-	 * If none of the above is true, a new frame must be chosen and reserved until
-	 * the swap in of the requested page into this frame is complete.
-	 * 
-	 * Note that you have to make sure that the validating thread of a page is set
-	 * correctly. To this end, you must set the page's validating thread using
-	 * setValidatingThread() when a pagefault happens and you must set it back to
-	 * null when the pagefault is over.
-	 * 
-	 * If no free frame could be found, then a page replacement algorithm must be
-	 * used to select a victim page to be replaced.
-	 * 
-	 * If a swap-out is necessary (because the chosen frame is dirty), the victim
-	 * page must be dissasociated from the frame and marked invalid. After the
-	 * swap-in, the frame must be marked clean. The swap-ins and swap-outs must be
-	 * preformed using regular calls to read() and write().
-	 * 
-	 * The student implementation should define additional methods, e.g, a method to
-	 * search for an available frame, and a method to select a victim page making
-	 * its frame available.
-	 * 
-	 * Note: multiple threads might be waiting for completion of the page fault. The
-	 * thread that initiated the pagefault would be waiting on the IORBs that are
-	 * tasked to bring the page in (and to free the frame during the swapout).
-	 * However, while pagefault is in progress, other threads might request the same
-	 * page. Those threads won't cause another pagefault, of course, but they would
-	 * enqueue themselves on the page (a page is also an Event!), waiting for the
-	 * completion of the original pagefault. It is thus important to call
-	 * notifyThreads() on the page at the end -- regardless of whether the pagefault
-	 * succeeded in bringing the page in or not.
-	 * 
-	 * @param thread        the thread that requested a page fault
-	 * @param referenceType whether it is memory read or write
-	 * @param page          the memory page
-	 * 
-	 * @return SUCCESS is everything is fine; FAILURE if the thread dies while
-	 *         waiting for swap in or swap out or if the page is already in memory
-	 *         and no page fault was necessary (well, this shouldn't happen,
-	 *         but...). In addition, if there is no frame that can be allocated to
-	 *         satisfy the page fault, then it should return NotEnoughMemory
 	 * 
 	 * @OSPProject Memory
+	 * 
+	 *             Authors: Abdulaziz Hasan 1555528, Mohammed Shukri 1647376 Date of
+	 *             the Last modification: 17/4/2020
 	 */
 	public static int do_handlePageFault(ThreadCB thread, int referenceType, PageTableEntry page) {
-		// your code goes here
-		
-		// check if page valid return FAILURE
+//		 Check and return FAILURE if the page is valid,
 		if (page.isValid()) {
 			return FAILURE;
 		}
-		
-		// create object new frame take initial value null
+
+//		 Creating a new empty frame. 
 		FrameTableEntry NFrame = null;
-		
-		// new frame value is a free frame
+//		 Searching for the first free frame, starting the search from frame[0].
+//		 The new frame found will be stored in the variable "NFrame"
 		NFrame = getFreeFrame();
 
-		// if there isn't free frame
+//		 Check if the frame is still empty
 		if (NFrame == null) {
-			
-			// do second chance
+
 			NFrame = SecondChance();
-			
-			// if free frame still null return not Enough Memory
-			if (NFrame == null)
+
+			if (NFrame == null) {
+
 				return NotEnoughMemory;
+			}
 		}
 
-		// set validating thread
+//			 If the frame is still empty after performing SecondChance; return "NotEnoughMemory".
+
+//		 Set the validating thread of the page to input thread.
 		page.setValidatingThread(thread);
-		
-		// create object event 
+//		 Create a new event: "event" of type SystemEvent() 
+//		 The event object is saved in the variable "event", because when pagefault handling 
+//		 is finished the thread will be resumed by
+//		 executing notifyThreads() on that event.
 		Event event = new SystemEvent("PageFaultHappend");
-		// Suspend thread on system event
+//	 	 Suspend the thread. 
 		thread.suspend(event);
 
-		// if new frame not not reserved and lock count less than 1
+// 		 Checking if the frame is not reserved nor locked
 		if (!NFrame.isReserved() && NFrame.getLockCount() <= 0) {
 
-			// set reserved new frame to thead task
+//			Protect the frame from theft by reserving the frame.
 			NFrame.setReserved(thread.getTask());
 
-
 		}
-
-		// create object new page take a frame page
+//		If the frame contains a dirty page, then swap-out will
+//		be performed, followed by freeing the frame.
 		PageTableEntry Npage = NFrame.getPage();
-		
-		// if new page not null
 		if (Npage != null) {
 
-			// if new frame is dirty
 			if (NFrame.isDirty()) {
-
-				// Swap out
+//				Swap-out
 				NFrame.getPage().getTask().getSwapFile().write(NFrame.getPage().getID(), NFrame.getPage(), thread);
-
-				// if the thread killed resume thread and dispatch then return FAILURE
+//				The thread that caused the pagefault can be killed by the simulator at any moment after
+//				the thread goes to sleep waiting for the swap-out to complete.
+//				FAILURE is returned in that case	
 				if (thread.getStatus() == GlobalVariables.ThreadKill) {
-					
-					// Resume all page thread
 					page.notifyThreads();
-					// Resume all event thread
 					event.notifyThreads();
-					// dispatch a thread
 					ThreadCB.dispatch();
-					// return FAILURE
 					return FAILURE;
 
 				}
-
-				// set new frame dirty to false
+//				Setting the frame's dirty bit to false = not dirty = clean. 
 				NFrame.setDirty(false);
 
 			}
-
-
-			// set new frame referenced to false 
+//			Freeing the frame:
+//			Dereferencing the frame.
+//			System.out.println("2");
 			NFrame.setReferenced(false);
-			
-			// if new page isn't null and unlocked
-			if (Npage != null && Npage.getFrame().getLockCount() == 0) {
-				
-				// set new frame page to null (free frame)
-				NFrame.setPage(null);
-				// set new page valid to false
+//			 Check if the page is not empty and the frame is not locked
+			if (Npage != null ) {
+
+//	  		    Setting the page's validity bit to 0
 				Npage.setValid(false);
-				// new page frame to null
+//				Emptying the page's frame by setting it to null frame.
 				Npage.setFrame(null);
+//				Emptying the frame by setting it to no page (null page) 
+				NFrame.setPage(null);
 
 			}
 
 		}
-
-		// set frame to page equal to new frame
+//		Setting the page's frame to the new frame
 		page.setFrame(NFrame);
-		// set page for new frame
-	    NFrame.setPage(page);
-		// swap in
+		NFrame.setPage(page);
+//		Swap-in
 		page.getTask().getSwapFile().read(page.getID(), page, thread);
-
-		// if the thread killed
+//		The thread that caused the pagefault can be killed by the simulator
+//		at any moment after the thread goes to sleep waiting for the swap-in to complete.
+//		FAILURE is returned in that case	
 		if (thread.getStatus() == ThreadKill) {
-
-			// set page validating to null
 			page.setValidatingThread(null);
-			// set page frame to null
 			page.setFrame(null);
-			// Resume page thread
 			page.notifyThreads();
 
-			// if new frame reserved equal to thread task set unreserved
-			if (NFrame.getReserved() == thread.getTask()) {
-				
-				// set unreserved for new frame to thread task
-				NFrame.setUnreserved(thread.getTask());
-			}
-
-			// set referenced for new frame to false
+//			if (NFrame.getReserved() == thread.getTask()) {
+//				NFrame.setUnreserved(thread.getTask());
+//			}
 			NFrame.setReferenced(false);
-			// set dirty for new frame to false
 			NFrame.setDirty(false);
-			// Resume event thread
 			event.notifyThreads();
-			// free frame 
 			NFrame.setPage(null);
-			// dispatch a thread
 			ThreadCB.dispatch();
-			// return FAILURE
 			return FAILURE;
 		}
 
-		// set page valid to true
+//		Setting the validity bit to true
 		page.setValid(true);
-		
-		// if new frame reserved equal to thread task
+//		Unreserving the frame if its still reserved
 		if (NFrame.getReserved() == thread.getTask()) {
-			
-			// set unreserved for new frame to thread task
 			NFrame.setUnreserved(thread.getTask());
 		}
-		
-		// set new frame referenced to true 
 		NFrame.setReferenced(true);
-		// Resume page thread
 		page.notifyThreads();
-		// Resume event thread 
 		event.notifyThreads();
-
-		// if referenced type is memory write
+//		Setting the frame's dirty bit to true if the reference type is MemoryWrite, else unset the dirty bit
 		if (referenceType == MemoryWrite) {
-			
-			// set dirty for new frame to true
 			NFrame.setDirty(true);
-		} 
-		
-		else {
-			// set it to false
+		} else {
 			NFrame.setDirty(false);
 		}
-
-		// set page validating to null
+//		Finalizing by clearing the page's validity bit, notifying the threads then dispatching. 
 		page.setValidatingThread(null);
-		// Dispatch a thread
+		page.notifyThreads();
+		event.notifyThreads();
 		ThreadCB.dispatch();
-		// return SUCCESS
 		return SUCCESS;
 	}
 
+	/**
+	 * Purpose: Calculate the current number of free frames. It does not matter
+	 * where the search in the frame table starts. Note: this method will not change
+	 * the value of the reference bits, dirty bits or MMU.Cursor.
+	 * 
+	 * Output: Integer of type (int) represnting the current number of free frames.
+	 * 
+	 * @OSPProject Memory
+	 * 
+	 *             Authors: Abdulaziz Hasan 1555528, Mohammed Shukri 1647376 Date of
+	 *             the Last modification: 16/4/2020
+	 */
 	static int numFreeFrames() {
 
-		// create variable to count free frame
 		int curentFreeFrames = 0;
-		// create a frame
 		FrameTableEntry frame;
-		
-		// Search for all frame
 		for (int i = 0; i < MMU.getFrameTableSize(); i++) {
 			frame = MMU.getFrame(i);
-			
-			// if frame page not null and frame isn't reserved and frame is unlocked and frame is not null
 			if ((frame.getPage() == null) && (!frame.isReserved()) && (frame.getLockCount() == 0) && frame != null) {
-				
-				// increment count of free frame by 1
 				curentFreeFrames++;
 			}
 		}
-		
-		// return number of free frame
 		return curentFreeFrames;
 
 	}
 
-	// Looks for a free frame; returns the first free frame starting the search from
-	// frame[0].
+	/**
+	 * Purpose: Looks for a free frame; returns the first free frame starting the
+	 * search from frame[0].
+	 * 
+	 * Output: Returns a frame of type FrameTableEntry.
+	 * 
+	 * @OSPProject Memory
+	 * 
+	 *             Authors: Abdulaziz Hasan 1555528, Mohammed Shukri 1647376 Date of
+	 *             the Last modification: 17/4/2020
+	 */
+
 	static FrameTableEntry getFreeFrame() {
-		
-		// create a frame
+
 		FrameTableEntry frame = null;
-		// create variable i 
 		int i = 0;
-		// while i less than table size
 		while (i < MMU.getFrameTableSize()) {
-			// get frame
 			frame = MMU.getFrame(i);
-			
-			// if frame not reserved and unlocked
-			if ((!frame.isReserved() && frame.getLockCount() == 0)) {
-				// break from while
-				break;
+			if ((frame.getPage() == null) && (!frame.isReserved()) && (frame.getLockCount() == 0) && frame != null) {
+				return frame;
+
 			}
-			// increment i 
 			i++;
 		}
-		// return frame
-		return frame;
-
-	}
-
-	static FrameTableEntry SecondChance() {
-		
-		// create frame
-		FrameTableEntry frame;
-		// to get first dirty frame
-		boolean isdirty = true;
-		// create frameID to save ID of frame
-		int frameID = 0;
-		// create counter
-		int counter = 0;
-
-		// Phase I - Batch freeing of occupied frames the clean.
-		// check if the counter is less than 2 multiply by frame table size
-		while (counter > (2 * MMU.getFrameTableSize())) {
-		
-			// check if number of free frame 
-			if (numFreeFrames() < MMU.wantFree) {
-
-				// get frame from MMU cursor
-				frame = MMU.getFrame(MMU.Cursor);
-
-				// 1. If a page's reference bit is set, clear it and move to the next frame
-				// check if frame is referenced
-				if (frame.isReferenced()) {
-					// set reference false
-					frame.setReferenced(false);
-					// increment cursor
-					MMU.Cursor++; // or could try frame = MMU.getFrame(MMU.Cursor + 1);
-				}
-
-				// 2. Finding a clean frame
-				
-				// if frame not referenced and not reserved and not dirty and unlocked and number of free frame less than or equal to MMU wantFree
-				if (frame.isReferenced() == false && frame.isReserved() == false && frame.isDirty() == false
-						&& frame.getLockCount() == 0) {
-					
-					// a. freeing the frame
-					frame.setPage(null);
-					// didn't clean the page
-					frame.setDirty(false);
-					// didn't unset the reference bit
-					frame.setReferenced(false);
-					
-					// b. Updating a page table
-					// set frame entry to null
-					frame.getPage().setFrame(null);
-					// set validity flag to false
-					frame.getPage().setValid(false);
-				}
-				
-				// check if frame dirty and unlocked and is not reserved,, also isdirty is true to get first dirty frame
-				if (frame.isDirty() && isdirty && frame.getLockCount() == 0 && frame.isReserved() == false) {
-					
-					// copy frame id
-					frameID = frame.getID();
-					// change isdirty to false
-					isdirty = false;
-				}
-				// update MMU cursor
-				MMU.Cursor = (MMU.Cursor + 1) % MMU.getFrameTableSize();
-				// increment counter
-				counter++;
-			}
-		}
-		
-
-		/*- Phase II - Skip if the number of free frames is wantFree, otherwise do the following: */
-
-		// check if number of free frame not equal to MMU wantFree
-		if (numFreeFrames() != MMU.wantFree) {
-			
-			// check if is dirty false ,, means there is dirty frame
-			if (!isdirty)
-				// return first dirty frame
-				return new FrameTableEntry(frameID);
-
-			// if number of free frame less than MMU wantFree and is dirty is true ,, means there is not dirty frame
-			if (numFreeFrames() < MMU.wantFree) {
-				// invoke method getfreeframe to get the free frame and save it
-				FrameTableEntry freeFrame = getFreeFrame();
-				// retrun the free frame
-				return freeFrame;
-			}
-
-		}
-		
-		/* Phase III - Phase one managed to free "wantFree" frames */
-		else {
-			// if number of free frame equal to MMU wantFree
-			if (numFreeFrames() == MMU.wantFree) {
-				// return frame from method getFreeFrame()
-				FrameTableEntry freeFrame = getFreeFrame();
-				// return free frame
-				return freeFrame;
-			}
-		}
-
-		// return null
 		return null;
 
 	}
 
-	/*
-	 * Feel free to add methods/fields to improve the readability of your code
+	/**
+	 * Purpose: Frees frames using the Second Chance approach. The search uses the
+	 * MMU variable MMU.Cursor to specify the starting frame index of the search.
+	 * 
+	 * Output: Returns a frame of type FrameTableEntry.
+	 * 
+	 * @OSPProject Memory
+	 * 
+	 *             Authors: Abdulaziz Hasan 1555528, Mohammed Shukri 1647376 Date of
+	 *             the Last modification: 17/4/2020
 	 */
+	static FrameTableEntry SecondChance() {
+		FrameTableEntry frame;
+		boolean isdirty = true;
+		int frameID = 0;
+		int counter = 0;
+		int x = MMU.getFrameTableSize() * 2;
+		// Phase I - Batch freeing of occupied frames that are clean.
+
+		while (counter < x && numFreeFrames() < MMU.wantFree) {
+			frame = MMU.getFrame(MMU.Cursor);
+			// 1. If a page's reference bit is set, clear it and move to the next frame
+			if (frame.isReferenced()) {
+				frame.setReferenced(false);
+				// MMU.Cursor++; // or could try frame = MMU.getFrame(MMU.Cursor + 1);
+			}
+			// 2. Finding a clean frame; i.e. a frame containing a page and whose reference
+			// bit is
+			// not set, and the frame is not locked and not reserved and not dirty.
+			else if (frame.getPage() != null && frame.isReferenced() == false && frame.getLockCount() == 0
+					&& frame.isReserved() == false && frame.isDirty() == false && numFreeFrames() <= MMU.wantFree) {
+				// a. freeing the frame
+				// b. Updating a page table
+
+				// set validity flag to false
+				frame.getPage().setValid(false);
+				// set frame entry to null
+				frame.getPage().setFrame(null);
+				// free frame
+				frame.setPage(null);
+				// didn't clean the page
+				frame.setDirty(false);
+				// didn't unset the reference bit
+				// frame.setReferenced(false);
+				
+
+			}
+			if (frame.getLockCount() == 0 && !frame.isReserved() && frame.isDirty() && isdirty) {
+				frameID = frame.getID();
+				isdirty = false;
+			}
+			MMU.Cursor = (MMU.Cursor + 1) % MMU.getFrameTableSize();
+			counter++;
+		}
+
+		/*- Phase II - Skip if the number of free frames is wantFree, otherwise do the following: */
+
+		if (numFreeFrames() != MMU.wantFree) {
+
+//			If the number of free frames from Phase I is less than wantFree and we did
+//			not come across any dirty frames
+			if (numFreeFrames() < MMU.wantFree && isdirty) {
+				System.out.println("isDirst == True");
+//				Invoking getFreeFrame() to get a free frame. 
+				FrameTableEntry freeFrame = getFreeFrame();
+//				Return the free frame.
+				return freeFrame;
+			}
+			return MMU.getFrame(frameID);
+
+		}
+
+		/* Phase III - Phase one managed to free "wantFree" frames */
+		else {
+
+//				invoking getFreeFrame() to get a free frame.
+			FrameTableEntry freeFrame = getFreeFrame();
+//				Returning the free frame.
+			return freeFrame;
+		}
+
+		// Return null if no appropriate frame is found.
+
+	}
+
+	/**
+	 * Purpose: Frees frames using the Second Chance approach. The search uses the
+	 * MMU variable MMU.Cursor to specify the starting frame index of the search.
+	 * 
+	 * Output: Returns a frame of type FrameTableEntry.
+	 * 
+	 * @OSPProject Memory
+	 * 
+	 *             Authors: Abdulaziz Hasan 1555528, Mohammed Shukri 1647376 Date of
+	 *             the Last modification: 18/4/2020
+	 */
+	static FrameTableEntry Fifo() {
+		MyOut.print("osp.Memory.PageFaultHandler", "Starting FIFO");
+		FrameTableEntry frame;
+		int counter = 0;
+
+		// Phase I - Batch freeing of occupied frames that are clean.
+
+		while ((counter > (MMU.getFrameTableSize())) && (numFreeFrames() <= MMU.wantFree)) {
+
+			frame = MMU.getFrame(MMU.Cursor);
+
+			// 2. Finding a clean frame; i.e. a frame containing a page and whose reference
+			// bit is
+			// not set, and the frame is not locked and not reserved and not dirty.
+			if (frame.getPage() != null && frame.isReferenced() == false && frame.getLockCount() == 0
+					&& frame.isReserved() == false && frame.isDirty() == false) {
+				// a. freeing the frame
+				// b. Updating a page table
+				frameFreeing(frame);
+			}
+
+			MMU.Cursor = (MMU.Cursor + 1) % MMU.getFrameTableSize();
+			counter++;
+
+		}
+		/* Phase II - Phase one managed to free "wantFree" frames */
+		if (numFreeFrames() == MMU.wantFree) {
+
+//					invoking getFreeFrame() to get a free frame.
+			FrameTableEntry freeFrame = getFreeFrame();
+//					Returning the free frame.
+			return freeFrame;
+
+		}
+		// Return null if no appropriate frame is found.
+		return null;
+
+	}
+
+	static FrameTableEntry frameFreeing(FrameTableEntry frame) {
+
+		// a. freeing the frame
+		frame.setPage(null);
+		frame.setDirty(false);
+		frame.setReferenced(false);
+		// b. Updating a page table
+		frame.getPage().setFrame(null);
+		frame.getPage().setValid(false);
+		return frame;
+	}
+
+	static Event reserve(ThreadCB thread, PageTableEntry page, FrameTableEntry frame) {
+//		Create a new event: "event" of type SystemEvent() 
+//		The event object is saved in the variable "event", because when pagefault handling 
+//		is finished the thread will be resumed by
+//		executing notifyThreads() on that event.
+		Event event = new SystemEvent("PageFaultHappend");
+//	 	Suspend the thread. 
+		thread.suspend(event);
+//		Set the validating thread of the page to input thread.
+		page.setValidatingThread(thread);
+//		Protect the frame from theft by reserving the frame.
+		frame.setReserved(thread.getTask());
+		return event;
+	}
 
 }
 
